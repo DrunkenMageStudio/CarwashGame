@@ -11,9 +11,7 @@
   "dependencies": {
     "@babylonjs/core": "^8.40.1",
     "@babylonjs/loaders": "^8.40.1",
-    "@prisma/client": "^7.4.1",
     "next": "^16.1.6",
-    "prisma": "^6.19.2",
     "react": "19.2.1",
     "react-dom": "19.2.1"
   },
