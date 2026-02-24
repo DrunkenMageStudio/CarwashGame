@@ -1,18 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  Engine,
-  Scene,
-  ArcRotateCamera,
-  Vector3,
-  HemisphericLight,
-  MeshBuilder,
-  Color3,
-  StandardMaterial,
-  PointerEventTypes,
-  PointerInfo,
-} from "@babylonjs/core";
+import { createGame } from "@/app/game/core/coreGame";
+import { ConcreteBayTheme } from "@/app/game/themes/concrete-bay/theme";
 
 type Props = { locationId: string; token: string };
 
@@ -22,181 +12,29 @@ type ScoreResp =
 
 export default function GameCanvas({ locationId, token }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const engineRef = useRef<Engine | null>(null);
-  const sceneRef = useRef<Scene | null>(null);
 
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState(90);
   const [status, setStatus] = useState<"loading" | "playing" | "ended">("loading");
   const [postResult, setPostResult] = useState<string | null>(null);
 
-  // Keep latest status available to timers/handlers created once
-  const statusRef = useRef(status);
-  useEffect(() => {
-    statusRef.current = status;
-  }, [status]);
-
   useEffect(() => {
     const canvas = canvasRef.current!;
-    const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
-    engineRef.current = engine;
-
-    const scene = new Scene(engine);
-    sceneRef.current = scene;
-
-    // Camera: orbit for now. Player doesn't move; only looks.
-    const cam = new ArcRotateCamera(
-      "cam",
-      Math.PI / 2,
-      Math.PI / 2.2,
-      12,
-      new Vector3(0, 1, 0),
-      scene
-    );
-    cam.attachControl(canvas, true);
-    cam.lowerRadiusLimit = 12;
-    cam.upperRadiusLimit = 12;
-    cam.lowerBetaLimit = cam.beta;
-    cam.upperBetaLimit = cam.beta;
-
-    // Prevent right-click menu (keeps interaction clean)
-    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-
-    new HemisphericLight("light", new Vector3(0, 1, 0), scene);
-
-    // Simple “tunnel” backdrop
-    const floor = MeshBuilder.CreateGround("floor", { width: 30, height: 60 }, scene);
-    floor.position.z = 10;
-    const floorMat = new StandardMaterial("floorMat", scene);
-    floorMat.diffuseColor = new Color3(0.08, 0.10, 0.14);
-    floor.material = floorMat;
-
-    // Target material
-    const targetMat = new StandardMaterial("targetMat", scene);
-    targetMat.diffuseColor = new Color3(0.2, 0.8, 0.9);
-
-    function spawnTarget() {
-      const t = MeshBuilder.CreateSphere(`t_${Date.now()}`, { diameter: 0.8 }, scene);
-      t.position = new Vector3(
-        (Math.random() - 0.5) * 8,
-        1 + Math.random() * 4,
-        8 + Math.random() * 18
-      );
-      t.material = targetMat;
-      t.metadata = { isTarget: true };
-    }
-
-    // Initial targets
-    for (let i = 0; i < 6; i++) spawnTarget();
-
-    // Spawn loop
-    const spawnId = window.setInterval(() => {
-      if (statusRef.current !== "playing") return;
-      spawnTarget();
-    }, 1200);
-
-    // --- Click to fire WITHOUT breaking camera look ---
-    // We treat a "shot" as a pointer down/up with minimal movement.
-    // If you dragged to look around, we do NOT shoot.
-    const DRAG_THRESHOLD_PX = 8;
-    let downX = 0;
-    let downY = 0;
-    let downPointerId: number | null = null;
-    let downTime = 0;
-    let dragged = false;
-
-    const obs = scene.onPointerObservable.add((pi: PointerInfo) => {
-      if (statusRef.current !== "playing") return;
-
-      if (pi.type === PointerEventTypes.POINTERDOWN) {
-        const ev = pi.event as PointerEvent;
-        // only left click / primary touch
-        if (ev.button !== 0) return;
-
-        downPointerId = ev.pointerId;
-        downX = ev.clientX;
-        downY = ev.clientY;
-        downTime = performance.now();
-        dragged = false;
-        return;
-      }
-
-      if (pi.type === PointerEventTypes.POINTERMOVE) {
-        const ev = pi.event as PointerEvent;
-        if (downPointerId === null || ev.pointerId !== downPointerId) return;
-
-        const dx = ev.clientX - downX;
-        const dy = ev.clientY - downY;
-        if (dx * dx + dy * dy > DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
-          dragged = true; // camera look gesture
-        }
-        return;
-      }
-
-      if (pi.type === PointerEventTypes.POINTERUP) {
-        const ev = pi.event as PointerEvent;
-        if (ev.button !== 0) return;
-        if (downPointerId === null || ev.pointerId !== downPointerId) return;
-
-        downPointerId = null;
-
-        // If it was a drag (look), don't shoot
-        if (dragged) return;
-
-        // Optional: ignore long-press
-        const heldMs = performance.now() - downTime;
-        if (heldMs > 600) return;
-
-        // Shoot!
-        const pick = scene.pick(scene.pointerX, scene.pointerY);
-        if (pick?.hit && pick.pickedMesh?.metadata?.isTarget) {
-          pick.pickedMesh.dispose();
-          setScore((s) => s + 100);
-        } else {
-          // Miss penalty optional
-          // setScore((s) => Math.max(0, s - 10));
-        }
-      }
-    });
-
-    // Start the game
     setStatus("playing");
-    setTimeLeft(90);
 
-    engine.runRenderLoop(() => {
-      scene.render();
+    const game = createGame({
+      canvas,
+      theme: ConcreteBayTheme, // swap themes here later
+      config: { durationSeconds: 90, spawnEveryMs: 1200 },
+      callbacks: {
+        onScore: setScore,
+        onTimeLeft: setTimeLeft,
+        onEnded: () => setStatus("ended"),
+      },
     });
 
-    const onResize = () => engine.resize();
-    window.addEventListener("resize", onResize);
-
-    return () => {
-      window.clearInterval(spawnId);
-      scene.onPointerObservable.remove(obs);
-      window.removeEventListener("resize", onResize);
-      scene.dispose();
-      engine.dispose();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => game.dispose();
   }, []);
-
-  // Timer
-  useEffect(() => {
-    if (status !== "playing") return;
-
-    const id = window.setInterval(() => {
-      setTimeLeft((t) => {
-        if (t <= 1) {
-          window.clearInterval(id);
-          setStatus("ended");
-          return 0;
-        }
-        return t - 1;
-      });
-    }, 1000);
-
-    return () => window.clearInterval(id);
-  }, [status]);
 
   // Post score once at end
   useEffect(() => {
@@ -216,6 +54,7 @@ export default function GameCanvas({ locationId, token }: Props) {
             token,
           }),
         });
+
         const json = (await res.json()) as ScoreResp;
         if (!alive) return;
 
@@ -244,7 +83,6 @@ export default function GameCanvas({ locationId, token }: Props) {
     <div style={{ width: "100vw", height: "100vh", position: "relative", overflow: "hidden" }}>
       <canvas ref={canvasRef} style={{ width: "100%", height: "100%", touchAction: "none" }} />
 
-      {/* HUD */}
       <div
         style={{
           position: "absolute",
@@ -265,9 +103,7 @@ export default function GameCanvas({ locationId, token }: Props) {
           <div style={{ fontWeight: 800 }}>Score: {score}</div>
           <div style={{ opacity: 0.9 }}>Time: {timeLeft}s</div>
         </div>
-        <div style={{ opacity: 0.75, fontSize: 12 }}>
-          Look: drag. Shoot: click/tap (quick press).
-        </div>
+        <div style={{ opacity: 0.75, fontSize: 12 }}>Look: drag. Shoot: click/tap.</div>
       </div>
 
       {status === "ended" ? (
@@ -290,9 +126,6 @@ export default function GameCanvas({ locationId, token }: Props) {
               Final Score: <strong>{score}</strong>
             </p>
             <p style={{ opacity: 0.9 }}>{postResult ?? "Submitting…"}</p>
-            <p style={{ opacity: 0.75, fontSize: 14 }}>
-              Next: crosshair + ray-from-center + gyro aiming + hit effects.
-            </p>
           </div>
         </div>
       ) : null}
